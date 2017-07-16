@@ -2,18 +2,25 @@
 npc/nos OpenAPI command line utility
 
 # How to use
+## install
 ```
-# install
-$ git clone https://github.com/xiaopal/npc-shell.git && sudo npc-shell/npc-shell.sh install
+# git clone https://github.com/xiaopal/npc-shell.git \
+    && chmod a+x npc-shell/npc-shell.sh \
+    && npc-shell/npc-shell.sh install
+```
 
-# openapi
+## openapi
+```
 $ NPC_API_KEY=<key> NPC_API_SECRET=<secret> npc api GET /api/v1/namespaces
+```
 
-# nos openapi
+## nos openapi
+```
 $ NPC_API_KEY=<key> NPC_API_SECRET=<secret> npc nos PUT /<bucket>/<object> <file_data|@file>
+```
 
-# save api key & secret
+## save api key & secret
+```
 $cat ~/.npc/api.key
 {"api_key":"<key>", "api_secret":"<secret>"}
-
 ```

@@ -187,8 +187,8 @@ do_action(){
 	else
 		[[ "$1" = "install" ]] &&  {
 			[ ! -x /usr/local/bin/jq ] && {
-				curl -s -k -o /usr/local/bin/jq 'https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64' \
-					&& chmod a+x /usr/local/bin/jq
+				# https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64
+				curl 'http://npc.nos-eastchina1.126.net/dl/jq_1.5_linux_amd64.tar.gz' |  tar -zx -C '/usr/local/bin'
 			}
 			[ ! -z "${BASH_SOURCE[0]}" ] && {
 				 cp "${BASH_SOURCE[0]}" /usr/local/bin/npc-shell.sh \
