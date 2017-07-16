@@ -118,8 +118,7 @@ nos_http(){
 		&& NOS_ENDPOINT="$NOS_PROTO$NOS_HOSTNAME" \
 		&& URI="$NOS_PROTO${NOS_BUCKET:+$NOS_BUCKET.}$NOS_HOSTNAME/$NOS_PATH${NOS_QUERY:+?$NOS_QUERY}"
 
-	ARGS=("${ARGS[@]}" "-H" "x-nos-entity-type: json")
-	local NOS_HEADERS=$'x-nos-entity-type:json\n' DATA CONTENT_TYPE CONTENT_MD5 NOS_DATE
+	local NOS_HEADERS DATA CONTENT_TYPE CONTENT_MD5 NOS_DATE NOS_ENTITY_TYPE
 	while true; do 
 		local ARG="$1"; shift || break
 		case "$ARG" in
@@ -137,11 +136,21 @@ nos_http(){
 			DATA="$1"; shift || break
 			ARGS=("${ARGS[@]}" "--data-binary" "$DATA")
 			;;
+		"--xml")
+			NOS_ENTITY_TYPE='xml'
+			;;
+		"--json")
+			NOS_ENTITY_TYPE='json'
+			;;
 		*)
 			ARGS=("${ARGS[@]}" "$ARG")
 			;;
 		esac
 	done
+	[ -z "$NOS_ENTITY_TYPE" ] && NOS_ENTITY_TYPE="json"
+	NOS_HEADERS="${NOS_HEADERS}x-nos-entity-type:$NOS_ENTITY_TYPE"$'\n'
+	ARGS=("${ARGS[@]}" "-H" "x-nos-entity-type: $NOS_ENTITY_TYPE")
+
 	[ -z "$NOS_DATE" ] && {
 		NOS_DATE="$(date -Ru | sed s/+0000/GMT/)"
 		ARGS=("${ARGS[@]}" "-H" "Date: $NOS_DATE")
