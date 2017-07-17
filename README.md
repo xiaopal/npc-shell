@@ -2,11 +2,10 @@
 npc/nos OpenAPI command line utility
 
 # How to use
+
 ## install
 ```
-# git clone https://github.com/xiaopal/npc-shell.git \
-    && chmod a+x npc-shell/npc-shell.sh \
-    && npc-shell/npc-shell.sh install
+# curl 'https://npc.nos-eastchina1.126.net/dl/install-npc-shell.sh' | /bin/bash
 ```
 
 ## openapi
@@ -21,6 +20,8 @@ $ NPC_API_KEY=<key> NPC_API_SECRET=<secret> npc nos PUT /<bucket>/<object> <file
 
 ## save api key & secret
 ```
-$cat ~/.npc/api.key
+$ cat ~/.npc/api.key
 {"api_key":"<key>", "api_secret":"<secret>"}
+
+$ npc api 'json.namespaces[]' GET /api/v1/namespaces
 ```

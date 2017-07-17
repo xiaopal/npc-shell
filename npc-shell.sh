@@ -215,21 +215,6 @@ do_action(){
 		FILTER="$FILTER_FUNCTIONS$1" && shift
 	elif [[ "$1" =~ ^(GET|PUT|POST|DELETE|HEAD)$ ]]; then
 		FILTER=".raw"
-	elif [[ "$1" = "install" ]]; then
-		# https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64
-		curl 'http://npc.nos-eastchina1.126.net/dl/jq_1.5_linux_amd64.tar.gz' |  tar -zx -C '/usr/local/bin' \
-			|| rm -f /usr/local/bin/jq
-		# https://github.com/xiaopal/npc-shell
-		curl 'http://npc.nos-eastchina1.126.net/dl/npc-shell.sh' > /usr/local/bin/npc-shell.sh \
-			&& chmod a+x /usr/local/bin/npc-shell.sh \
-			&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc \
-			&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-api \
-			&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-nos
-		[ -x /usr/local/bin/jq ] && [ -x /usr/local/bin/npc-shell.sh ] && {
-			echo "Installed">&2 && npc
-			return 0
-		}
-		return 1
 	else
 		{
 			[ "$FIXED_ACTION" = "api" ] && echo "Usage: $(basename $0) (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
