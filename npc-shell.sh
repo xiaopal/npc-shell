@@ -5,6 +5,7 @@
 # - NPC_API_KEY
 # - NPC_API_SECRET
 # - NPC_API_TOKEN
+# - NPC_NOS_ENDPOINT
 
 [ -z "$NPC_API_ENDPOINT" ] && NPC_API_ENDPOINT="https://open.c.163.com"
 [ -z "$NPC_NOS_ENDPOINT" ] && NPC_NOS_ENDPOINT="https://nos-eastchina1.126.net"
@@ -214,20 +215,22 @@ do_action(){
 		FILTER="$FILTER_FUNCTIONS$1" && shift
 	elif [[ "$1" =~ ^(GET|PUT|POST|DELETE|HEAD)$ ]]; then
 		FILTER=".raw"
+	elif [[ "$1" = "install" ]]; then
+		# https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64
+		curl 'http://npc.nos-eastchina1.126.net/dl/jq_1.5_linux_amd64.tar.gz' |  tar -zx -C '/usr/local/bin' \
+			|| rm -f /usr/local/bin/jq
+		# https://github.com/xiaopal/npc-shell
+		curl 'http://npc.nos-eastchina1.126.net/dl/npc-shell.sh' > /usr/local/bin/npc-shell.sh \
+			&& chmod a+x /usr/local/bin/npc-shell.sh \
+			&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc \
+			&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-api \
+			&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-nos
+		[ -x /usr/local/bin/jq ] && [ -x /usr/local/bin/npc-shell.sh ] && {
+			echo "Installed">&2 && npc
+			return 0
+		}
+		return 1
 	else
-		[[ "$1" = "install" ]] &&  {
-			[ ! -x /usr/local/bin/jq ] && {
-				# https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64
-				curl 'http://npc.nos-eastchina1.126.net/dl/jq_1.5_linux_amd64.tar.gz' |  tar -zx -C '/usr/local/bin' \
-					|| rm -f /usr/local/bin/jq
-			}
-			curl 'http://npc.nos-eastchina1.126.net/dl/npc-shell.sh' > /usr/local/bin/npc-shell.sh \
-				&& chmod a+x /usr/local/bin/npc-shell.sh \
-				&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc \
-				&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-api \
-				&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-nos
-			echo "Installed"
-		} >&2
 		{
 			[ "$FIXED_ACTION" = "api" ] && echo "Usage: $(basename $0) (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
 			[ "$FIXED_ACTION" = "nos" ] && echo "Usage: $(basename $0) (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]" >&2
@@ -257,4 +260,4 @@ nos(){
 	do_action nos "$@"
 }
 
-[ ! -z "${BASH_SOURCE[0]}" ] && [ "${BASH_SOURCE[0]}" == "$0" ] && do_action "$@"
+([ "${BASH_SOURCE[0]}" = "$0" ] || [ -z "${BASH_SOURCE[0]}" ]) && do_action "$@"
