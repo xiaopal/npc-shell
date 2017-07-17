@@ -19,12 +19,19 @@ fi
 
 do_http(){
 	local METHOD="$1" URI="$2"; shift && shift	
-	local RESPONSE="$( exec 3> >(export METHOD URI;jq -sc '{method: env.METHOD, uri: env.URI, status:.[0], raw:.[1], body:.[2]}')
-		[ ! -z "$NPC_DEBUG" ] && echo "curl -s -k -X '$METHOD' $(printf "'%s' " "$@") '$URI'" >&2
-		export BODY_RAW="$(curl -s -k -o >(base64 -w 0 >&1) -w '"%{http_code}"' -X "$METHOD" "$@" "$URI" >&3)"
+	[ ! -z "$NPC_DEBUG" ] && echo "curl -s -k -X '$METHOD' $(printf "'%s' " "$@") '$URI'" >&2
+	http_headers(){
+		jq -sR 'split("\r\n") | {
+			status: (.[0]|capture("^HTTP/(1.0|1.1) +(?<code>[0-9]+) +*(?<text>.+)$")//{code:"000"}),
+			headers: (.[1:]|map(capture("^(?<key>[^:]+): *(?<value>.+)$"))|from_entries)
+		}'
+	}	
+	local RESPONSE="$( 
+		exec 3> >(export METHOD URI;jq -sc '{method: env.METHOD, uri: env.URI} + (.[0]//{}) + { raw:.[1], body:.[2] }')
+		export BODY_RAW="$(curl -s -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 -w 0)"
 		export BODY=$(base64 -d <<<"$BODY_RAW")
 		jq -n 'env.BODY_RAW, env.BODY' >&3 )"
-	jq -r '"HTTP \(.status) - \(.method) \(.uri)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE" 
+	jq -r '"HTTP \(.status.code) \(.status.text) - \(.method) \(.uri)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE" 
 }
 
 check_http_response(){
@@ -37,7 +44,7 @@ check_http_response(){
 		fi
 		return 0
 	}
-	if [[ "$(jq -r '.status'<<<"$RESPONSE")" = 20* ]]; then
+	if [[ "$(jq -r '.status.code'<<<"$RESPONSE")" = 20* ]]; then
 		[ ! -z "$FILTER" ] && {
 			do_output  || return 1
 		} 
@@ -94,7 +101,7 @@ api_http(){
 
 	local RESPONSE=$(do_api)
 	
-	[ "$(check_http_response '.status'<<<"$RESPONSE")" = "401" ] && {
+	[ "$(check_http_response '.status.code'<<<"$RESPONSE")" = "401" ] && {
 		rm -f $API_TOKEN
 		RESPONSE=$(do_api)
 	}
@@ -189,23 +196,36 @@ do_action(){
 		[[ "$1" =~ ^(api|nos)$ ]] && ACTION="$1" && shift
 	} 
 
+	local FILTER_FUNCTIONS='
+		. as $response |
+		def status:
+			$response.status.code;
+		def headers:
+			$response.headers;
+		def body:
+			$response.body;
+		def text:
+			$response.body;
+		def json: 
+			(try $response.body|fromjson);
+	'
+
 	if [[ "$2" =~ ^(GET|PUT|POST|DELETE|HEAD)$ ]]; then
-		FILTER="(try .body|fromjson)|$1" && shift
+		FILTER="$FILTER_FUNCTIONS$1" && shift
 	elif [[ "$1" =~ ^(GET|PUT|POST|DELETE|HEAD)$ ]]; then
 		FILTER=".raw"
 	else
 		[[ "$1" = "install" ]] &&  {
 			[ ! -x /usr/local/bin/jq ] && {
 				# https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64
-				curl 'http://npc.nos-eastchina1.126.net/dl/jq_1.5_linux_amd64.tar.gz' |  tar -zx -C '/usr/local/bin'
+				curl 'http://npc.nos-eastchina1.126.net/dl/jq_1.5_linux_amd64.tar.gz' |  tar -zx -C '/usr/local/bin' \
+					|| rm -f /usr/local/bin/jq
 			}
-			[ ! -z "${BASH_SOURCE[0]}" ] && {
-				 cp "${BASH_SOURCE[0]}" /usr/local/bin/npc-shell.sh \
-					&& chmod a+x /usr/local/bin/npc-shell.sh \
-					&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc \
-					&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-api \
-					&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-nos
-			}
+			curl 'http://npc.nos-eastchina1.126.net/dl/npc-shell.sh' > /usr/local/bin/npc-shell.sh \
+				&& chmod a+x /usr/local/bin/npc-shell.sh \
+				&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc \
+				&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-api \
+				&& ln -sf /usr/local/bin/npc-shell.sh /usr/local/bin/npc-nos
 			echo "Installed"
 		} >&2
 		{
