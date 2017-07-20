@@ -23,16 +23,16 @@ do_http(){
 	[ ! -z "$NPC_DEBUG" ] && echo "curl -s -k -X '$METHOD' $(printf "'%s' " "$@") '$URI'" >&2
 	http_headers(){
 		jq -sR 'split("\r\n") | {
-			status: (.[0]|capture("^HTTP/(1.0|1.1) +(?<code>[0-9]+) +*(?<text>.+)$")//{code:"000"}),
-			headers: (.[1:]|map(capture("^(?<key>[^:]+): *(?<value>.+)$"))|from_entries)
+			status: (map(capture("^HTTP/(1.0|1.1) +(?<code>[0-9]+) +*(?<text>.+)$")//empty)|last),
+			headers: (map(capture("^(?<key>[^:]+): *(?<value>.+)$"))|from_entries)
 		}'
-	}	
+	}
 	local RESPONSE="$( 
 		exec 3> >(export METHOD URI;jq -sc '{method: env.METHOD, uri: env.URI} + (.[0]//{}) + { raw:.[1], body:.[2] }')
 		export BODY_RAW="$(curl -s -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 -w 0)"
 		export BODY=$(base64 -d <<<"$BODY_RAW")
 		jq -n 'env.BODY_RAW, env.BODY' >&3 )"
-	jq -r '"HTTP \(.status.code) \(.status.text) - \(.method) \(.uri)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE" 
+	jq -r '"HTTP \(.status.code) \(.status.text) - \(.method) \(.uri)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE"
 }
 
 check_http_response(){
@@ -127,11 +127,10 @@ nos_http(){
 		&& URI="$NOS_PROTO${NOS_BUCKET:+$NOS_BUCKET.}$NOS_HOSTNAME/$NOS_PATH${NOS_QUERY:+?$NOS_QUERY}"
 
 	local NOS_HEADERS DATA CONTENT_TYPE CONTENT_MD5 NOS_DATE NOS_ENTITY_TYPE
-	while true; do 
-		local ARG="$1"; shift || break
+	while ARG="$1" && shift; do
 		case "$ARG" in
 		"-H"|"--header")
-			local HEADER="$1"; shift || break
+			local HEADER="$1" && shift || break
 			local HEADER_NAME HEADER_VALUE && IFS=': ' read -r HEADER_NAME HEADER_VALUE <<<"$HEADER" && {
 				[[ "${HEADER_NAME,,}" = "x-nos-"* ]] && NOS_HEADERS="$NOS_HEADERS${HEADER_NAME,,}:$HEADER_VALUE"$'\n'
 				[[ "${HEADER_NAME,,}" = "content-type" ]] && CONTENT_TYPE="$HEADER_VALUE"
@@ -141,7 +140,7 @@ nos_http(){
 			}
 			;;
 		"-d"|"--data")
-			DATA="$1"; shift || break
+			DATA="$1" && shift || break
 			ARGS=("${ARGS[@]}" "--data-binary" "$DATA")
 			;;
 		"--xml")
@@ -188,61 +187,66 @@ nos_http(){
 	do_http "$METHOD" "$URI" "${ARGS[@]}"
 }
 
-do_action(){
-    local ACTION FILTER FIXED_ACTION
 
-	[[ "$0" =~ api(.sh)?$ ]] && FIXED_ACTION="api"
-	[[ "$0" =~ nos(.sh)?$ ]] && FIXED_ACTION="nos"
-	[ ! -z "$FIXED_ACTION" ] && ACTION="$FIXED_ACTION" || {
-		[[ "$1" =~ ^(api|nos)$ ]] && ACTION="$1" && shift
-	} 
-
-	local FILTER_FUNCTIONS='
-		. as $response |
-		def status:
-			$response.status.code;
-		def headers:
-			$response.headers;
-		def body:
-			$response.body;
-		def text:
-			$response.body;
-		def json: 
-			(try $response.body|fromjson);
-	'
-
-	if [[ "$2" =~ ^(GET|PUT|POST|DELETE|HEAD)$ ]]; then
-		FILTER="$FILTER_FUNCTIONS$1" && shift
-	elif [[ "$1" =~ ^(GET|PUT|POST|DELETE|HEAD)$ ]]; then
-		FILTER=".raw"
-	else
-		{
-			[ "$FIXED_ACTION" = "api" ] && echo "Usage: $(basename $0) (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
-			[ "$FIXED_ACTION" = "nos" ] && echo "Usage: $(basename $0) (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]" >&2
-			[ -z "$FIXED_ACTION" ] && {
-				echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
-				echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]"
+do_shell(){
+	local SCRIPT="${BASH_SOURCE[0]}" && [ -L "$SCRIPT" ] && SCRIPT="$(readlink -f "$SCRIPT")"
+	local SCRIPT_DIR="$(cd "$(dirname $SCRIPT)"; pwd)" \
+		FILTER_FUNCTIONS='. as $response |
+			def status:
+				$response.status.code;
+			def headers:
+				$response.headers;
+			def body:
+				$response.body;
+			def text:
+				$response.body;
+			def json: 
+				(try $response.body|fromjson);'
+	local ACTION="$1" && shift && case "$ACTION" in
+		api|nos)
+			local FILTER=".raw" ERROR_OUTPUT="/dev/fd/2" METHOD URI DATA ARGS=()
+			while ARG="$1" && shift; do
+				case "$ARG" in
+				PUT|POST)
+					METHOD="$ARG" && URI="$1" && DATA="$2" && shift && shift
+					ARGS=("${ARGS[@]}" "-d" "$DATA")
+					break
+					;;
+				GET|DELETE)
+					METHOD="$ARG" && URI="$1" && shift
+					break
+					;;
+				HEAD)
+					METHOD="$ARG" && URI="$1" && shift
+					ARGS=("-I" "${ARGS[@]}")
+					break
+					;;
+				"-e"|"--error")
+					ERROR_OUTPUT=
+					;;
+				*)
+					FILTER="$FILTER_FUNCTIONS$ARG"
+					;;
+				esac
+			done
+			ARGS=("${ARGS[@]}" "$@")
+			[ ! -z "$METHOD" ] && [ ! -z "$URI" ] && {
+				"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" \
+					| check_http_response "$FILTER" "$ERROR_OUTPUT" && return 0 || return 1					
 			}
-		} >&2
-		return 1
-	fi
-
-	local ARGS=() METHOD="$1" URI="$2" && shift && shift
-	[[ "$METHOD" =~ ^(PUT|POST)$ ]] && DATA="$1" && {
-		ARGS=("${ARGS[@]}" "-d" "$DATA")
-		shift
-	}
-	[ "$METHOD" = "HEAD" ] && ARGS=("-I" "${ARGS[@]}")
-	ARGS=("${ARGS[@]}" "$@")
-	"${ACTION:-api}_http" "$METHOD" "$URI" "${ARGS[@]}" | check_http_response "$FILTER" /dev/fd/2 && return 0 || return 1
+			;;
+		*)
+			[ ! -z "$ACTION" ] && [ -x "$SCRIPT_DIR/npc-$ACTION.sh" ] && {
+				"$SCRIPT_DIR/npc-$ACTION.sh" "$@" && return 0 || return 1
+			}
+			;;
+		esac
+	{
+		echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
+		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]"
+		echo "       $(basename $0) <action> [args...]"
+	} >&2
+	return 1
 }
 
-api(){
-	do_action api "$@"
-}
-
-nos(){
-	do_action nos "$@"
-}
-
-([ "${BASH_SOURCE[0]}" = "$0" ] || [ -z "${BASH_SOURCE[0]}" ]) && do_action "$@"
+do_shell "$@"
