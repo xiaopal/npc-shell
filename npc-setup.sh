@@ -30,15 +30,24 @@ do_setup(){
 				;;
 			-)
 				INPUT="$(jq -c --argjson input "$INPUT" '$input + .')"
-				[ -z "$INPUT" ] && exit 1
+				[ -z "$INPUT" ] && {
+					echo "[ERROR] cannot parse stdin" >&2
+					exit 1
+				}
 				;;
 			@*)
 				INPUT="$(jq -c --argjson input "$INPUT" '$input + .' "${ARG#@}")"
-				[ -z "$INPUT" ] && exit 1
+				[ -z "$INPUT" ] && {
+					echo "[ERROR] cannot parse file: '${ARG#@}'" >&2
+					exit 1
+				}
 				;;
 			*)
 				INPUT="$(jq -c --argjson input "$INPUT" '$input + .'<<<"$ARG")"
-				[ -z "$INPUT" ] && exit 1
+				[ -z "$INPUT" ] && {
+					echo "[ERROR] cannot parse json: '${ARG}'" >&2
+					exit 1
+				}
 				;;
 			esac
 	done
