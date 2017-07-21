@@ -5,23 +5,28 @@ NPC_ACTION_FORKS=${NPC_ACTION_FORKS:-5}
 NPC_ACTION_TIMEOUT=${NPC_ACTION_TIMEOUT:-5m}
 NPC_ACTION_PULL_SECONDS=${NPC_ACTION_PULL_SECONDS:-5}
 NPC_ACTION_RETRY_SECONDS=${NPC_ACTION_RETRY_SECONDS:-10}
-NPC_INIT_SSH_KEY=
 
 do_setup(){
-	local ARG INPUT='{}' ACTIONS ACTION_PREPARE KEEP_STAGES
+	local ARG INPUT='{}' ACTIONS ACTION_INIT ACTION_SUSPEND ACTION_RESUME ACTION_RESTART ACTION_INIT_SSH_KEY
 	while ARG="$1" && shift; do
 		[ ! -z "$ARG" ] && case "$ARG" in
-			--prepare)
-				ACTION_PREPARE='Y'
-				;;
 			--create|--update|--destroy)
 				ACTIONS="${ACTIONS} ${ARG#--}"
 				;;
-			--init-ssh-key)
-				NPC_INIT_SSH_KEY=Y
+			--init)
+				ACTION_INIT='Y'
 				;;
-			--keep)
-				KEEP_STAGES='Y'
+			--suspend)
+				ACTION_SUSPEND='Y'
+				;;
+			--resume)
+				ACTION_RESUME='Y'
+				;;
+			--restart)
+				ACTION_RESTART='Y'
+				;;
+			--init-ssh-key)
+				ACTION_INIT_SSH_KEY='Y'
 				;;
 			-)
 				INPUT="$(jq -c --argjson input "$INPUT" '$input + .')"
@@ -38,46 +43,61 @@ do_setup(){
 			esac
 	done
 	
-	mkdir -p "$NPC_STAGE" && cd "$NPC_STAGE" ; trap "rm -fr '$NPC_STAGE'" EXIT
-	echo "[INFO] prepare" >&2
-	prepare "$INPUT" || return 1
-	[ -z "$ACTION_PREPARE" ] && for ACTION in ${ACTIONS:-create update destroy}; do
-		echo "[INFO] $ACTION instances">&2
+	mkdir -p "$NPC_STAGE" && cd "$NPC_STAGE" ; trap "wait; rm -fr '$NPC_STAGE'" EXIT
+	exec 99<$NPC_STAGE && flock 99 || return 1
+	[ -f $NPC_STAGE/.input ] && {
+		[ ! -z "$ACTION_RESUME" ] || {
+			echo "[ERROR] $NPC_STAGE/.input already exists" >&2
+			return 1
+		}
+		[ ! -z "$ACTION_RESTART" ] && rm -f $NPC_STAGE/.input
+	}
+	[ ! -f $NPC_STAGE/.input ] && {
+		[ ! -z "$ACTION_RESUME" ] && {
+			echo "[ERROR] $NPC_STAGE/.input not exists" >&2
+			return 1
+		}
+		jq -c '.'<<<"$INPUT" >$NPC_STAGE/.input || return 1
+	}
+
+	local NPC_SSH_KEY="$(jq -r '.npc_ssh_key.name//"ansible"' $NPC_STAGE/.input)"
+	local NPC_SSH_KEY_FILE="$(cd ~; pwd)/.npc/ssh_key.$NPC_SSH_KEY" && [ -f "$NPC_SSH_KEY_FILE" ] || NPC_SSH_KEY_FILE=
+	export NPC_SSH_KEY NPC_SSH_KEY_FILE
+	echo "[INFO] init" >&2
+	[ ! -z "$ACTION_INIT_SSH_KEY" ] && {
+		check_ssh_keys --create <<<"$NPC_SSH_KEY" || return 1
+	}
+	init || return 1
+	[ ! -z "$ACTION_INIT" ] || for ACTION in ${ACTIONS:-create update destroy}; do
 		[ ! -z "$ACTION" ] && {
+			echo "[INFO] $ACTION instances">&2
 			"$ACTION" || return 1
 		}
 	done
 	echo "[INFO] finish">&2
 	report || return 1
-	[ ! -z "$KEEP_STAGES" ] && trap - EXIT
+	[ ! -z "$ACTION_SUSPEND" ] && trap - EXIT
 	return 0
 }
 
-
-FILTER_LOAD_INSTANCE='{
+MAPPER_LOAD_INSTANCE='{
 		id: .uuid,
 		name: .name,
 		status: .status,
 		ip: .vnet_ip,
 		actual_image: .images[0].imageName,
 		actual_type: { cpu:.vcpu, memory:"\(.memory_gb)G"}
-	}|select(.status=="ACTIVE" and .ip)'
-prepare(){
-	local INPUT="$1"
-	local NPC_SSH_KEY="$(jq -r '.npc_ssh_key.name//"ansible"'<<<"$INPUT")"
-	[ ! -z "$NPC_INIT_SSH_KEY" ] && {
-		check_ssh_keys --create <<<"$NPC_SSH_KEY" || return 1
-	}
-	local NPC_SSH_KEY_FILE="$(cd ~; pwd)/.npc/ssh_key.$NPC_SSH_KEY" && [ -f "$NPC_SSH_KEY_FILE" ] || NPC_SSH_KEY_FILE=
-
-	jq -ce '.npc_instances | arrays'<<<"$INPUT" >$NPC_STAGE/instances.tmp && {
-		export NPC_SSH_KEY="$NPC_SSH_KEY" NPC_SSH_KEY_FILE="$NPC_SSH_KEY_FILE"
+	}'
+FILTER_LOAD_INSTANCE='.status=="ACTIVE" and .ip'
+init(){
+	local INPUT="$NPC_STAGE/.input"
+	jq -ce '.npc_instances | arrays' $INPUT >$NPC_STAGE/instances.tmp && {
 		while read -r LINE; do
 			for NAME in $(eval "echo $(jq -r '.name'<<<"$LINE")"); do
 				[ ! -z "$NAME" ] && NAME="$NAME" jq -c '. + {name:env.NAME}'<<<"$LINE"
 			done
 		done < <(jq -c '.[]' $NPC_STAGE/instances.tmp ) \
-			| jq --argjson input "$INPUT" -sc 'map({key:.name, value:(.+{
+			| jq --argjson input "$(jq -c . $INPUT)" -sc 'map({key:.name, value:(.+{
 					default_instance_image: $input.npc_instance_image,
 					default_instance_type: $input.npc_instance_type,
 					'"${NPC_SSH_KEY_FILE:+ssh_key_file: env.NPC_SSH_KEY_FILE,}"'
@@ -85,12 +105,15 @@ prepare(){
 				})})|from_entries' >$NPC_STAGE/instances.expected || return 1
 		npc api 'json.instances | map(
 			select(try .properties|fromjson["publicKeys"]|split(",")|contains([env.NPC_SSH_KEY]))
-				|'"$FILTER_LOAD_INSTANCE"'
+				|'"$MAPPER_LOAD_INSTANCE"'
 				|{
 					key: .name,
 					value: .
 				})|from_entries' GET '/api/v1/vm/allInstanceInfo?pageSize=9999&pageNum=1' >$NPC_STAGE/instances.actual \
 		|| return 1
+
+		jq -re ".[]|select($FILTER_LOAD_INSTANCE|not)"'
+			|"[ERROR] instance=\(.name), status=\(.name), ip=\(.ip)"' $NPC_STAGE/instances.actual >&2 && return 1
 
 		jq -sce '(.[0] | map_values(. + {
 					defined: true,
@@ -160,14 +183,20 @@ check_ssh_keys(){
 				echo "[ERROR] ssh_key '$SSH_KEY' not found" >&2
 				[ ! -z "$FORCE_CREATE" ] && {
 					rm -f $STAGE && mkdir -p "$(dirname "$SSH_KEY_FILE")"
-					SSH_KEY_ID="$(npc api 'json.id//empty' \
+					STAGE_SSH_KEY="$(npc api 'json|select(.id and .fingerprint)' \
 						POST /api/v1/secret-keys "$(jq -Rc "{key_name:.}"<<<"$SSH_KEY")")"
+					[ ! -z "$STAGE_SSH_KEY" ] && SSH_KEY_ID="$(jq -r '.id'<<<"$STAGE_SSH_KEY")" || {
+						echo "[ERROR] Failed to create ssh_key '$SSH_KEY'" >&2
+					}
 				}
 			}
 			[ ! -z "$SSH_KEY_ID" ] && [ ! -z "$FORCE_CREATE" ] && {
 				npc api GET "/api/v1/secret-keys/$SSH_KEY_ID" >$SSH_KEY_FILE \
-					&& chmod 600 $SSH_KEY_FILE && exit 0
+					&& chmod 600 $SSH_KEY_FILE \
+					&& [ "$(ssh_key_fingerprint "$SSH_KEY_FILE")" = "$(jq -r '.fingerprint'<<<"$STAGE_SSH_KEY")" ] \
+					&& exit 0
 				rm -f $SSH_KEY_FILE
+				echo "[ERROR] Failed to download ssh_key '$SSH_KEY'" >&2
 			} 
 			echo "[ERROR] '$SSH_KEY_FILE' not exists" >&2
 			exit 1			
@@ -179,19 +208,40 @@ check_ssh_keys(){
 report(){
 	{
 		[ -f $NPC_STAGE/instances ] && {
-			jq -c '.[]|select(.create or .update or .destroy | not)
-				|.+{groups: (.groups + ["npc_instance_ready"])}' $NPC_STAGE/instances
-
-			[ -f $NPC_STAGE/instances.updating ] && [ ! -f $NPC_STAGE/instances.updated ] \
-				&& jq -c '.+{groups: (.groups + ["npc_instance_deinit","npc_instance_updating"])}' $NPC_STAGE/instances.updating
-			[ -f $NPC_STAGE/instances.destroying ] && [ ! -f $NPC_STAGE/instances.destroyed ] \
-				&& jq -c '.+{groups: (.groups + ["npc_instance_deinit","npc_instance_destroying"])}' $NPC_STAGE/instances.destroying
-			[ -f $NPC_STAGE/instances.created ] && jq -c '.+{groups: (.groups + ["npc_instance_init","npc_instance_created","npc_instance_created","npc_instance_ready"])}' $NPC_STAGE/instances.created
-			[ -f $NPC_STAGE/instances.updated ] && jq -c '.+{groups: (.groups + ["npc_instance_init","npc_instance_updated","npc_instance_ready"])}' $NPC_STAGE/instances.updated
+			jq -nc '{ instances:[] }'
+			jq -c '.[]|select(.create or .update or .destroy | not)|{instances:[.]}' $NPC_STAGE/instances		
+			[ -f $NPC_STAGE/instances.creating ] && if [ ! -f $NPC_STAGE/instances.created ]; then
+				jq -c '{creating: [{instance:.}]}' $NPC_STAGE/instances.creating
+			else
+				jq -c '.+{groups: (.groups + ["npc_instance_created"])}|{instances:[.]}' $NPC_STAGE/instances.created
+				jq -c '{created: [{instance:.}]}' $NPC_STAGE/instances.created
+			fi
+			[ -f $NPC_STAGE/instances.updating ] && if [ ! -f $NPC_STAGE/instances.updated ]; then
+				jq -c '.+{groups: (.groups + ["npc_instance_updating"])}|{instances:[.]}' $NPC_STAGE/instances.updating
+				jq -c '{updating: [{instance:.}]}' $NPC_STAGE/instances.updating
+			else
+				jq -c '.+{groups: (.groups + ["npc_instance_updated"])}|{instances:[.]}' $NPC_STAGE/instances.updated
+				jq -c '{updated: [{instance:.}]}' $NPC_STAGE/instances.updated
+			fi
+			[ -f $NPC_STAGE/instances.destroying ] && if [ ! -f $NPC_STAGE/instances.destroyed ]; then
+				jq -c '.+{groups: (.groups + ["npc_instance_destroying"])}|{instances:[.]}' $NPC_STAGE/instances.destroying
+				jq -c '{destroying: [{instance:.}]}' $NPC_STAGE/instances.destroying
+			else
+				jq -c '{destroyed: [{instance:.}]}' $NPC_STAGE/instances.destroyed
+			fi
 		}
-	} | jq -sc '{ 
-		instances: (.//[]) 
-	}'
+	} | jq -sc 'reduce .[] as $item ( {}; {
+			instances: (if $item.instances then ((.instances//[]) + $item.instances) else .instances end),
+			creating: (if $item.creating then ((.creating//[]) + $item.creating) else .creating end),
+			updating: (if $item.updating then ((.updating//[]) + $item.updating) else .updating end),
+			destroying: (if $item.destroying then ((.destroying//[]) + $item.destroying) else .destroying end),
+			created: (if $item.created then ((.created//[]) + $item.created) else .created end),
+			updated: (if $item.updated then ((.updated//[]) + $item.updated) else .updated end),
+			destroyed: (if $item.destroyed then ((.destroyed//[]) + $item.destroyed) else .destroyed end)
+		} | with_entries(select(.value))) | . + { 
+			changing: (.creating or .updating or .destroying), 
+			changed: (.created or .updated or .destroyed)
+		}'
 }
 
 action_loop(){
@@ -288,7 +338,7 @@ prepare_to_create(){
 pull_instance_result(){
 	local INSTANCE_ID="$1" RESULT="$2" INSTANCE="$3" CTX="$4"
 	while action_check_continue "$CTX"; do
-		npc api "json|$FILTER_LOAD_INSTANCE" GET "/api/v1/vm/$INSTANCE_ID" >$RESULT.actual \
+		npc api "json|$MAPPER_LOAD_INSTANCE|select($FILTER_LOAD_INSTANCE)" GET "/api/v1/vm/$INSTANCE_ID" >$RESULT.actual \
 			&& jq -c --argjson instance "$INSTANCE" '$instance + .' $RESULT.actual >$RESULT && {
 				rm -f $RESULT.actual
 				return 0

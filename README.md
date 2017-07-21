@@ -28,7 +28,7 @@ $ npc api 'json.namespaces[]' GET /api/v1/namespaces
 
 ## setup
 ```
-cat <<EOF | npc setup --init-ssh-key -
+$ npc setup - --init-ssh-key <<EOF
 {
   "npc_instance_image": "Debian 8.6",
   "npc_instance_type": {
