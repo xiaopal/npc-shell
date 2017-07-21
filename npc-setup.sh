@@ -93,11 +93,11 @@ MAPPER_LOAD_INSTANCE='{
 		id: .uuid,
 		name: .name,
 		status: .status,
-		ip: .vnet_ip,
+		lan_ip: .vnet_ip,
 		actual_image: .images[0].imageName,
 		actual_type: { cpu:.vcpu, memory:"\(.memory_gb)G"}
 	}'
-FILTER_LOAD_INSTANCE='.status=="ACTIVE" and .ip'
+FILTER_LOAD_INSTANCE='.status=="ACTIVE" and .lan_ip'
 init(){
 	local INPUT="$NPC_STAGE/.input"
 	jq -ce '.npc_instances | arrays' $INPUT >$NPC_STAGE/instances.tmp && {
@@ -122,7 +122,7 @@ init(){
 		|| return 1
 
 		jq -re ".[]|select($FILTER_LOAD_INSTANCE|not)"'
-			|"[ERROR] instance=\(.name), status=\(.name), ip=\(.ip)"' $NPC_STAGE/instances.actual >&2 && return 1
+			|"[ERROR] instance=\(.name), status=\(.name), lan_ip=\(.lan_ip)"' $NPC_STAGE/instances.actual >&2 && return 1
 
 		jq -sce '(.[0] | map_values(. + {
 					defined: true,
