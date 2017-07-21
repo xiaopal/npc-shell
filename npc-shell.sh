@@ -10,6 +10,8 @@
 [ -z "$NPC_API_ENDPOINT" ] && NPC_API_ENDPOINT="https://open.c.163.com"
 [ -z "$NPC_NOS_ENDPOINT" ] && NPC_NOS_ENDPOINT="https://nos-eastchina1.126.net"
 
+NPC_API_KEY="${NPC_API_KEY:-$NPC_APP_KEY}"
+NPC_API_SECRET="${NPC_API_SECRET:-$NPC_APP_SECRET}"
 ([ -z "$NPC_API_KEY" ] || [ -z "$NPC_API_SECRET" ]) && if [ -f ./api.key ]; then
 	NPC_API_KEY="$(jq -r '.app_key//.api_key//empty' ./api.key)"
 	NPC_API_SECRET="$(jq -r '.app_secret//.api_secret//empty' ./api.key)"
