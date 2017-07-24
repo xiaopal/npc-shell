@@ -55,11 +55,12 @@ do_setup(){
 	mkdir -p "$NPC_STAGE" && cd "$NPC_STAGE" ; trap "wait; rm -fr '$NPC_STAGE'" EXIT
 	exec 99<$NPC_STAGE && flock 99 || return 1
 	[ -f $NPC_STAGE/.input ] && {
-		[ ! -z "$ACTION_RESUME" ] || {
-			echo "[ERROR] $NPC_STAGE/.input already exists" >&2
-			return 1
+		[ ! -z "$ACTION_RESTART" ] && rm -f $NPC_STAGE/.input || {
+			[ ! -z "$ACTION_RESUME" ] || {
+				echo "[ERROR] $NPC_STAGE/.input already exists" >&2
+				return 1
+			}
 		}
-		[ ! -z "$ACTION_RESTART" ] && rm -f $NPC_STAGE/.input
 	}
 	[ ! -f $NPC_STAGE/.input ] && {
 		[ ! -z "$ACTION_RESUME" ] && {
@@ -109,7 +110,6 @@ init(){
 			| jq --argjson input "$(jq -c . $INPUT)" -sc 'map({key:.name, value:(.+{
 					default_instance_image: $input.npc_instance_image,
 					default_instance_type: $input.npc_instance_type,
-					'"${NPC_SSH_KEY_FILE:+ssh_key_file: env.NPC_SSH_KEY_FILE,}"'
 					ssh_keys: ((.ssh_keys//[]) + [env.NPC_SSH_KEY] | unique)
 				})})|from_entries' >$NPC_STAGE/instances.expected || return 1
 		npc api 'json.instances | map(
@@ -132,6 +132,7 @@ init(){
 				})) 
 			| map_values(. + {
 				groups: ( (.groups//[]) + ["npc_instance"] | unique ),
+				'"${NPC_SSH_KEY_FILE:+ssh_key_file: env.NPC_SSH_KEY_FILE,}"'
 				create: (.defined and (.attached|not)),
 				update: (.defined and .attached 
 					and ( (.instance_type and .actual_type != .instance_type) 
