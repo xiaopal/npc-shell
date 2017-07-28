@@ -10,25 +10,25 @@ do_setup(){
 	local ARG INPUT='{}' ACTIONS ACTION_INIT ACTION_SUSPEND ACTION_RESUME ACTION_RESTART ACTION_INIT_SSH_KEY
 	while ARG="$1" && shift; do
 		[ ! -z "$ARG" ] && case "$ARG" in
-			--create|--update|--destroy)
+			--create|--update|--destroy|-create|-update|-destroy)
 				ACTIONS="${ACTIONS} ${ARG#--}"
 				;;
-			--init)
+			--init|--setup|-init|-setup)
 				ACTION_INIT='Y'
 				;;
-			--suspend)
+			--suspend|-suspend)
 				ACTION_SUSPEND='Y'
 				;;
-			--resume)
+			--resume|-resume)
 				ACTION_RESUME='Y'
 				;;
-			--restart)
+			--restart|-restart)
 				ACTION_RESTART='Y'
 				;;
-			--init-ssh-key)
+			--init-ssh-key|-init-ssh-key)
 				ACTION_INIT_SSH_KEY='Y'
 				;;
-			-)
+			--|-)
 				INPUT="$(jq -c --argjson input "$INPUT" '$input + .')"
 				[ -z "$INPUT" ] && {
 					echo "[ERROR] cannot parse stdin" >&2
@@ -131,7 +131,7 @@ init(){
 					attached: true
 				})) 
 			| map_values(. + {
-				groups: ( (.groups//[]) + ["npc_instance"] | unique ),
+				groups: ( .groups//[] | unique ),
 				'"${NPC_SSH_KEY_FILE:+ssh_key_file: env.NPC_SSH_KEY_FILE,}"'
 				create: (.defined and (.attached|not)),
 				update: (.defined and .attached 
@@ -223,18 +223,18 @@ report(){
 			[ -f $NPC_STAGE/instances.creating ] && if [ ! -f $NPC_STAGE/instances.created ]; then
 				jq -c '{creating: [{instance:.}]}' $NPC_STAGE/instances.creating
 			else
-				jq -c '.+{groups: (.groups + ["npc_instance_created"])}|{instances:[.]}' $NPC_STAGE/instances.created
+				jq -c '.+{change_action:"created"}|{instances:[.]}' $NPC_STAGE/instances.created
 				jq -c '{created: [{instance:.}]}' $NPC_STAGE/instances.created
 			fi
 			[ -f $NPC_STAGE/instances.updating ] && if [ ! -f $NPC_STAGE/instances.updated ]; then
-				jq -c '.+{groups: (.groups + ["npc_instance_updating"])}|{instances:[.]}' $NPC_STAGE/instances.updating
+				jq -c '.+{change_action:"updating"}|{instances:[.]}' $NPC_STAGE/instances.updating
 				jq -c '{updating: [{instance:.}]}' $NPC_STAGE/instances.updating
 			else
-				jq -c '.+{groups: (.groups + ["npc_instance_updated"])}|{instances:[.]}' $NPC_STAGE/instances.updated
+				jq -c '.+{change_action:"updated"}|{instances:[.]}' $NPC_STAGE/instances.updated
 				jq -c '{updated: [{instance:.}]}' $NPC_STAGE/instances.updated
 			fi
 			[ -f $NPC_STAGE/instances.destroying ] && if [ ! -f $NPC_STAGE/instances.destroyed ]; then
-				jq -c '.+{groups: (.groups + ["npc_instance_destroying"])}|{instances:[.]}' $NPC_STAGE/instances.destroying
+				jq -c '.+{change_action:"destroying"}|{instances:[.]}' $NPC_STAGE/instances.destroying
 				jq -c '{destroying: [{instance:.}]}' $NPC_STAGE/instances.destroying
 			else
 				jq -c '{destroyed: [{instance:.}]}' $NPC_STAGE/instances.destroyed
