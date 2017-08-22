@@ -31,7 +31,7 @@ do_http(){
 	}
 	local RESPONSE="$( 
 		exec 3> >(export METHOD URI;jq -sc '{method: env.METHOD, uri: env.URI} + (.[0]//{}) + { raw:.[1], body:.[2] }')
-		export BODY_RAW="$(curl -s -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 -w 0)"
+		export BODY_RAW="$(curl -s -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 | tr -d '\n')"
 		export BODY=$(base64 -d <<<"$BODY_RAW")
 		jq -n 'env.BODY_RAW, env.BODY' >&3 )"
 	jq -r '"HTTP \(.status.code) \(.status.text) - \(.method) \(.uri)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE"
