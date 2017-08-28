@@ -25,3 +25,13 @@ $ cat ~/.npc/api.key
 
 $ npc api 'json.namespaces[]' GET /api/v1/namespaces
 ```
+
+## docker
+```
+$ docker run -it --rm \
+    -e NPC_API_KEY=<API_KEY> \
+    -e NPC_API_SECRET=<API_SECRET> \
+    xiaopal/npc-shell
+
+docker:/# npc api GET /api/v1/namespaces
+```
