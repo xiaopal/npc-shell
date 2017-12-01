@@ -1,6 +1,6 @@
 #! /bin/bash
 
-# NPC_INSTALL_ACTION=deploy ./install-npc-shell.sh
+# ./install-npc-shell.sh deploy
 deploy(){
 	[ -x ./npc-shell.sh ] && [ -f ./install-npc-shell.sh ] \
 		&& tar -zcf npc-shell.tar.gz npc-shell.sh && ./npc-shell.sh nos PUT /npc/dl/npc-shell.tar.gz @npc-shell.tar.gz \
