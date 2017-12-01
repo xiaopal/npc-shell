@@ -336,7 +336,7 @@ do_shell(){
 	{
 		echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
 		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]"
-		echo "       $(basename $0) api2 (GET|PUT|POST|DELETE|HEAD) '/vpc/ListVPC/2017-11-16?PageSize=20&PageNumber=1' [data]"
+		echo "       $(basename $0) api2 (GET|PUT|POST|DELETE|HEAD) '/vpc/ListVPC/2017-11-30?PageSize=20&PageNumber=1' [data]"
 		echo "       $(basename $0) <action> [args...]"
 	} >&2
 	return 1
