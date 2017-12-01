@@ -6,9 +6,11 @@
 # - NPC_API_SECRET
 # - NPC_API_TOKEN
 # - NPC_NOS_ENDPOINT
+# - NPC_API2_ENDPOINT
 
 [ -z "$NPC_API_ENDPOINT" ] && NPC_API_ENDPOINT="https://open.c.163.com"
 [ -z "$NPC_NOS_ENDPOINT" ] && NPC_NOS_ENDPOINT="https://nos-eastchina1.126.net"
+[ -z "$NPC_API2_ENDPOINT" ] && NPC_API2_ENDPOINT="$NPC_API_ENDPOINT"
 
 NPC_API_KEY="${NPC_API_KEY:-$NPC_APP_KEY}"
 NPC_API_SECRET="${NPC_API_SECRET:-$NPC_APP_SECRET}"
@@ -189,6 +191,94 @@ nos_http(){
 	do_http "$METHOD" "$URI" "${ARGS[@]}"
 }
 
+api2_http(){
+	local ARGS=() METHOD="$1" URI="$2" && shift && shift
+
+	[ ! -z "$NPC_API_KEY" ] && [ ! -z "$NPC_API_SECRET" ] || {
+		echo 'api.key required'>&2
+		return 1
+	}
+
+	[[ "$URI" =~ ^(http|https)'://' ]] || URI="${NPC_API2_ENDPOINT%/}/${URI#/}"
+	local API2_ENDPOINT API2_PROTO API2_HOSTNAME API2_PATH API2_QUERY \
+		API2_SERVICE API2_ACTION API2_VERSION \
+		API2_SIGNATURE \
+		API2_SIGNATURE_VERSION='1.0' API2_SIGNATURE_METHOD='HMAC-SHA256' \
+		API2_SIGNATURE_NONCE="$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32)" \
+		API2_TIMESTAMP="$(date -u +%FT%TZ)" \
+		API2_REGION='cn-east-1' \
+		API2_PAYLOAD_HASH='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+	IFS=/ read -r API2_PROTO _ API2_HOSTNAME API2_PATH <<<"$URI" \
+		&& API2_PROTO="$API2_PROTO" \
+		&& IFS=? read -r API2_PATH API2_QUERY <<<"$API2_PATH" \
+		&& IFS=/ read -r API2_SERVICE API2_ACTION API2_VERSION <<<"$API2_PATH" \
+		&& API2_ENDPOINT="$API2_PROTO//$API2_HOSTNAME"
+
+	local DATA
+	while ARG="$1" && shift; do
+		case "$ARG" in
+		"--global")
+			API2_REGION='global'
+			;;
+		"-d"|"--data")
+			DATA="$1" && shift || break
+			ARGS=("${ARGS[@]}" "--data-binary" "$DATA")
+			;;
+		*)
+			ARGS=("${ARGS[@]}" "$ARG")
+			;;
+		esac
+	done
+	[ ! -z "$DATA" ] && read -r API2_PAYLOAD_HASH _ \
+		<<<"$(([[ "$DATA" = "@"* ]] && cat ${DATA#@} || echo -n "$DATA")| sha256sum)"
+
+	local API2_PARAMS
+	[ ! -z "$API2_QUERY" ] && while IFS='=' read -r -d '&' PARAM_NAME PARAM_VALUE; do
+		case "$PARAM_NAME" in
+		"Region")
+			API2_REGION="$PARAM_VALUE"
+			;;
+		"Service")
+			API2_SERVICE="$PARAM_VALUE"
+			;;
+		"Action")
+			API2_ACTION="$PARAM_VALUE"
+			;;
+		"Version")
+			API2_VERSION="$PARAM_VALUE"
+			;;
+		"Timestamp")
+			API2_TIMESTAMP="$PARAM_VALUE"
+			;;
+		"SignatureNonce")
+			API2_SIGNATURE_NONCE="$PARAM_VALUE"
+			;;
+		"Signature"|"SignatureMethod"|"SignatureVersion"|"AccessKey")
+			echo "[WARN] $PARAM_NAME=$PARAM_VALUE ignored" >&2
+			;;
+		*)
+			API2_PARAMS="$API2_PARAMS$(export PARAM_NAME PARAM_VALUE
+				jq -nr '@uri "\(env.PARAM_NAME)=\(env.PARAM_VALUE)"')"$'\n'
+			;;
+		esac
+	done <<<"$API2_QUERY&"
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_ACTION" jq -nr '@uri "Action=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_VERSION" jq -nr '@uri "Version=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_REGION" jq -nr '@uri "Region=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$NPC_API_KEY" jq -nr '@uri "AccessKey=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_TIMESTAMP" jq -nr '@uri "Timestamp=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_VERSION" jq -nr '@uri "SignatureVersion=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_METHOD" jq -nr '@uri "SignatureMethod=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_NONCE" jq -nr '@uri "SignatureNonce=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$(echo -n "$API2_PARAMS"|sort)" && API2_QUERY="${API2_PARAMS//$'\n'/&}"
+	API2_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s' \
+			"$METHOD" "$API2_HOSTNAME" "/$API2_SERVICE" "$API2_QUERY" "$API2_PAYLOAD_HASH" \
+		| openssl sha256 -hmac "$NPC_API_SECRET" -binary | base64)"
+
+	URI="$API2_ENDPOINT/$API2_SERVICE?$API2_QUERY&$(PARAM="$API2_SIGNATURE" jq -nr '@uri "Signature=\(env.PARAM)"')"
+	do_http "$METHOD" "$URI" "${ARGS[@]}"
+}
 
 do_shell(){
 	local SCRIPT="${BASH_SOURCE[0]}" && [ -L "$SCRIPT" ] && SCRIPT="$(readlink -f "$SCRIPT")"
@@ -205,7 +295,7 @@ do_shell(){
 			def json: 
 				(try $response.body|fromjson);'
 	local ACTION="$1" && shift && case "$ACTION" in
-		api|nos)
+		api|nos|api2)
 			local FILTER=".raw" ERROR_OUTPUT="/dev/fd/2" METHOD URI DATA ARGS=()
 			while ARG="$1" && shift; do
 				case "$ARG" in
@@ -246,6 +336,7 @@ do_shell(){
 	{
 		echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
 		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]"
+		echo "       $(basename $0) api2 (GET|PUT|POST|DELETE|HEAD) '/vpc/ListVPC/2017-11-16?PageSize=20&PageNumber=1' [data]"
 		echo "       $(basename $0) <action> [args...]"
 	} >&2
 	return 1
