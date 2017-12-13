@@ -173,14 +173,14 @@ nos_http(){
 		read -r CONTENT_MD5 _ <<<"$(([[ "$DATA" = "@"* ]] && cat ${DATA#@} || echo -n "$DATA")| md5sum)" \
 			&& ARGS=("${ARGS[@]}" "-H" "Content-MD5: $CONTENT_MD5")
 	}
-	[ ! -z "$NOS_HEADERS" ] && NOS_HEADERS="$(echo -n "$NOS_HEADERS"|sort)"$'\n'
+	[ ! -z "$NOS_HEADERS" ] && NOS_HEADERS="$(echo -n "$NOS_HEADERS"|LC_ALL=C sort)"$'\n'
 	
 	local NOS_RESOURCE="/${NOS_BUCKET:+$NOS_BUCKET/}${NOS_PATH//'/'/'%2F'}" NOS_SUBRESOURCES
 	[ ! -z "$NOS_QUERY" ] && while IFS='=' read -r -d '&' PARAM_NAME PARAM_VALUE; do
 		[[ "$PARAM_NAME" =~ ^(acl|location|versioning|versions|versionId|uploadId|uploads|partNumber|delete|deduplication)$ ]] \
 			&& NOS_SUBRESOURCES="$NOS_SUBRESOURCES$PARAM_NAME${PARAM_VALUE:+=$PARAM_VALUE}"$'\n'
 	done <<<"$NOS_QUERY&"
-	[ ! -z "$NOS_SUBRESOURCES" ] && NOS_SUBRESOURCES="$(echo -n "$NOS_SUBRESOURCES"|sort)" \
+	[ ! -z "$NOS_SUBRESOURCES" ] && NOS_SUBRESOURCES="$(echo -n "$NOS_SUBRESOURCES"|LC_ALL=C sort)" \
 		&& NOS_RESOURCE="$NOS_RESOURCE?${NOS_SUBRESOURCES//$'\n'/&}"
 
 	local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
@@ -271,10 +271,13 @@ api2_http(){
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_VERSION" jq -nr '@uri "SignatureVersion=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_METHOD" jq -nr '@uri "SignatureMethod=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_NONCE" jq -nr '@uri "SignatureNonce=\(env.PARAM)"')"$'\n'
-	API2_PARAMS="$(echo -n "$API2_PARAMS"|sort)" && API2_QUERY="${API2_PARAMS//$'\n'/&}"
+	API2_PARAMS="$(echo -n "$API2_PARAMS"|LC_ALL=C sort)" && API2_QUERY="${API2_PARAMS//$'\n'/&}"
 	API2_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s' \
 			"$METHOD" "$API2_HOSTNAME" "/$API2_SERVICE" "$API2_QUERY" "$API2_PAYLOAD_HASH" \
 		| openssl sha256 -hmac "$NPC_API_SECRET" -binary | base64)"
+	
+	[ ! -z "$NPC_DEBUG" ] && printf 'API2_STRING_TO_SIGN="%s\\n%s\\n%s\\n%s\\n%s"\n' \
+		"$METHOD" "$API2_HOSTNAME" "/$API2_SERVICE" "$API2_QUERY" "$API2_PAYLOAD_HASH" >&2
 
 	URI="$API2_ENDPOINT/$API2_SERVICE?$API2_QUERY&$(PARAM="$API2_SIGNATURE" jq -nr '@uri "Signature=\(env.PARAM)"')"
 	do_http "$METHOD" "$URI" "${ARGS[@]}"
