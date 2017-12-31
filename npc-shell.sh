@@ -204,7 +204,7 @@ api2_http(){
 		API2_SERVICE API2_ACTION API2_VERSION \
 		API2_SIGNATURE \
 		API2_SIGNATURE_VERSION='1.0' API2_SIGNATURE_METHOD='HMAC-SHA256' \
-		API2_SIGNATURE_NONCE="$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32)" \
+		API2_SIGNATURE_NONCE="$(tr -dc 'a-zA-Z0-9' </dev/urandom 2>/dev/null | head -c 32)" \
 		API2_TIMESTAMP="$(date -u +%FT%TZ)" \
 		API2_REGION='cn-east-1' \
 		API2_PAYLOAD_HASH='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
@@ -215,7 +215,7 @@ api2_http(){
 		&& IFS=/ read -r API2_SERVICE API2_ACTION API2_VERSION <<<"$API2_PATH" \
 		&& API2_ENDPOINT="$API2_PROTO//$API2_HOSTNAME"
 
-	local DATA
+	local DATA CONTENT_TYPE='application/json'
 	while ARG="$1" && shift; do
 		case "$ARG" in
 		"--global")
@@ -225,13 +225,21 @@ api2_http(){
 			DATA="$1" && shift || break
 			ARGS=("${ARGS[@]}" "--data-binary" "$DATA")
 			;;
+		"--form")
+			CONTENT_TYPE='application/x-www-form-urlencoded'
+			;;
+		"--json")
+			CONTENT_TYPE='application/json'
+			;;
 		*)
 			ARGS=("${ARGS[@]}" "$ARG")
 			;;
 		esac
 	done
-	[ ! -z "$DATA" ] && read -r API2_PAYLOAD_HASH _ \
-		<<<"$(([[ "$DATA" = "@"* ]] && cat ${DATA#@} || echo -n "$DATA")| sha256sum)"
+	[ ! -z "$DATA" ] && {
+		read -r API2_PAYLOAD_HASH _ <<<"$(([[ "$DATA" = "@"* ]] && cat ${DATA#@} || echo -n "$DATA")| sha256sum)"
+		ARGS=("${ARGS[@]}" -H "Content-Type: $CONTENT_TYPE")
+	}
 
 	local API2_PARAMS
 	[ ! -z "$API2_QUERY" ] && while IFS='=' read -r -d '&' PARAM_NAME PARAM_VALUE; do
