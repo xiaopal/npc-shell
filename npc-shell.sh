@@ -36,7 +36,8 @@ do_http(){
 		export BODY_RAW="$(curl -s -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 | tr -d '\n')"
 		export BODY=$(base64 -d <<<"$BODY_RAW")
 		jq -n 'env.BODY_RAW, env.BODY' >&3 )"
-	jq -r '"HTTP \(.status.code) \(.status.text) - \(.method) \(.uri)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE"
+	DISPLAY_URI="${DO_HTTP_DISPLAY_URI:-$URI}" \
+	jq -r '"HTTP \(.status.code) \(.status.text) - \(.method) \(env.DISPLAY_URI)"'<<<"$RESPONSE" >&2 && echo "$RESPONSE"
 }
 
 check_http_response(){
@@ -274,11 +275,12 @@ api2_http(){
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_ACTION" jq -nr '@uri "Action=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_VERSION" jq -nr '@uri "Version=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_REGION" jq -nr '@uri "Region=\(env.PARAM)"')"$'\n'
-	API2_PARAMS="$API2_PARAMS$(PARAM="$NPC_API_KEY" jq -nr '@uri "AccessKey=\(env.PARAM)"')"$'\n'
-	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_TIMESTAMP" jq -nr '@uri "Timestamp=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_VERSION" jq -nr '@uri "SignatureVersion=\(env.PARAM)"')"$'\n'
-	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_METHOD" jq -nr '@uri "SignatureMethod=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_TIMESTAMP" jq -nr '@uri "Timestamp=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_NONCE" jq -nr '@uri "SignatureNonce=\(env.PARAM)"')"$'\n'
+	local DISPLAY_QUERY="${API2_PARAMS//$'\n'/&}"
+	API2_PARAMS="$API2_PARAMS$(PARAM="$NPC_API_KEY" jq -nr '@uri "AccessKey=\(env.PARAM)"')"$'\n'
+	API2_PARAMS="$API2_PARAMS$(PARAM="$API2_SIGNATURE_METHOD" jq -nr '@uri "SignatureMethod=\(env.PARAM)"')"$'\n'
 	API2_PARAMS="$(echo -n "$API2_PARAMS"|LC_ALL=C sort)" && API2_QUERY="${API2_PARAMS//$'\n'/&}"
 	API2_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s' \
 			"$METHOD" "$API2_HOSTNAME" "/$API2_SERVICE" "$API2_QUERY" "$API2_PAYLOAD_HASH" \
@@ -288,6 +290,7 @@ api2_http(){
 		"$METHOD" "$API2_HOSTNAME" "/$API2_SERVICE" "$API2_QUERY" "$API2_PAYLOAD_HASH" >&2
 
 	URI="$API2_ENDPOINT/$API2_SERVICE?$API2_QUERY&$(PARAM="$API2_SIGNATURE" jq -nr '@uri "Signature=\(env.PARAM)"')"
+	DO_HTTP_DISPLAY_URI="$API2_ENDPOINT/$API2_SERVICE?$DISPLAY_QUERY" \
 	do_http "$METHOD" "$URI" "${ARGS[@]}"
 }
 
