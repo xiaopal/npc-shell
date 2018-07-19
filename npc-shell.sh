@@ -198,7 +198,7 @@ nos_http(){
 	[ ! -z "$NOS_SUBRESOURCES" ] && NOS_SUBRESOURCES="$(echo -n "$NOS_SUBRESOURCES"|LC_ALL=C sort)" \
 		&& NOS_RESOURCE="$NOS_RESOURCE?${NOS_SUBRESOURCES//$'\n'/&}"
 
-	if [ "$METHOD" == 'URL' ]; then
+	if [ "$METHOD" == 'GET-URL' ]; then
 		local NOS_EXPIRES="$(( $(date +%s) + ${NOS_OFFSET_EXPIRES:-600} ))"
 		local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
 				"GET" "" "" "$NOS_EXPIRES" "" "$NOS_RESOURCE" \
@@ -351,7 +351,7 @@ do_shell(){
 					ARGS=("-I" "${ARGS[@]}")
 					break
 					;;
-				URL)
+				GET-URL)
 					METHOD="$ARG" && URI="$1" && shift
 					break
 					;;
@@ -365,7 +365,7 @@ do_shell(){
 			done
 			ARGS=("${ARGS[@]}" "$@")
 			[ ! -z "$METHOD" ] && [ ! -z "$URI" ] && {
-				if [ "$METHOD" == 'URL' ]; then
+				if [ "$METHOD" == 'GET-URL' ]; then
 					"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" && return 0 || return 1
 				else
 					"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" \
@@ -381,7 +381,7 @@ do_shell(){
 		esac
 	{
 		echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
-		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD|URL) /<bucket>/ [data]"
+		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD|GET-URL) /<bucket>/ [data]"
 		echo "       $(basename $0) api2 (GET|PUT|POST|DELETE|HEAD) '/vpc/ListVPC/2017-11-30?PageSize=20&PageNumber=1' [data]"
 		echo "       $(basename $0) <action> [args...]"
 	} >&2
