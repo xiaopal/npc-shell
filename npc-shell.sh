@@ -5,24 +5,33 @@
 # - NPC_API_KEY
 # - NPC_API_SECRET
 # - NPC_API_TOKEN
+# - NPC_API_REGION
 # - NPC_NOS_ENDPOINT
 # - NPC_API2_ENDPOINT
-# - NPC_API_DEFAULT_REGION
-
-[ -z "$NPC_API_ENDPOINT" ] && NPC_API_ENDPOINT="https://open.c.163.com"
-[ -z "$NPC_NOS_ENDPOINT" ] && NPC_NOS_ENDPOINT="https://nos-eastchina1.126.net"
-[ -z "$NPC_API2_ENDPOINT" ] && NPC_API2_ENDPOINT="$NPC_API_ENDPOINT"
-[ -z "$NPC_API2_REGION" ] && NPC_API2_REGION="${NPC_API_REGION:-cn-east-1}"
 
 NPC_API_KEY="${NPC_API_KEY:-$NPC_APP_KEY}"
 NPC_API_SECRET="${NPC_API_SECRET:-$NPC_APP_SECRET}"
-([ -z "$NPC_API_KEY" ] || [ -z "$NPC_API_SECRET" ]) && if [ -f ./api.key ]; then
-	NPC_API_KEY="$(jq -r '.app_key//.api_key//empty' ./api.key)"
-	NPC_API_SECRET="$(jq -r '.app_secret//.api_secret//empty' ./api.key)"
-elif [ -f ~/.npc/api.key ]; then
-	NPC_API_KEY="$(jq -r '.app_key//.api_key//empty' ~/.npc/api.key)"
-	NPC_API_SECRET="$(jq -r '.app_secret//.api_secret//empty' ~/.npc/api.key)"
-fi 
+
+[ -z "$NPC_API_CONFIG" ] && [ -f ./api.key ] && NPC_API_CONFIG=./api.key
+[ -z "$NPC_API_CONFIG" ] && [ -f ~/.npc/api.key ] && NPC_API_CONFIG=~/.npc/api.key
+[ -z "$NPC_API_CONFIG" ] && [ -f /etc/npc/api.key ] && NPC_API_CONFIG=/etc/npc/api.key
+[ ! -z "$NPC_API_CONFIG" ] && [ -f "$NPC_API_CONFIG" ] && {
+	[ -z "$NPC_API_ENDPOINT" ] && NPC_API_ENDPOINT="$(jq -r '.api_endpoint//.endpoint//empty' "$NPC_API_CONFIG")"
+	[ -z "$NPC_API_KEY" ] && NPC_API_KEY="$(jq -r '.api_key//.app_key//.key//empty' "$NPC_API_CONFIG")"
+	[ -z "$NPC_API_SECRET" ] && NPC_API_SECRET="$(jq -r '.api_secret//.app_secret//.secret//empty' "$NPC_API_CONFIG")"
+	[ -z "$NPC_API_REGION" ] && NPC_API_REGION="$(jq -r '.api_region//.region//empty' "$NPC_API_CONFIG")"
+	[ -z "$NPC_NOS_ENDPOINT" ] && NPC_NOS_ENDPOINT="$(jq -r '.nos_endpoint//empty' "$NPC_API_CONFIG")"
+	[ -z "$NPC_NOS_KEY" ] && NPC_NOS_KEY="$(jq -r '.nos_key//empty' "$NPC_API_CONFIG")"
+	[ -z "$NPC_NOS_SECRET" ] && NPC_NOS_SECRET="$(jq -r '.nos_secret//empty' "$NPC_API_CONFIG")"
+}
+
+[ -z "$NPC_API_ENDPOINT" ] && NPC_API_ENDPOINT="https://open.c.163.com"
+[ -z "$NPC_API2_ENDPOINT" ] && NPC_API2_ENDPOINT="$NPC_API_ENDPOINT"
+[ -z "$NPC_API2_REGION" ] && NPC_API2_REGION="${NPC_API_REGION:-cn-east-1}"
+
+[ -z "$NPC_NOS_ENDPOINT" ] && NPC_NOS_ENDPOINT="https://nos-eastchina1.126.net"
+[ -z "$NPC_NOS_KEY" ] && NPC_NOS_KEY="$NPC_API_KEY"
+[ -z "$NPC_NOS_SECRET" ] && NPC_NOS_SECRET="$NPC_API_SECRET"
 
 do_http(){
 	local METHOD="$1" URI="$2"; shift && shift	
@@ -119,7 +128,7 @@ api_http(){
 nos_http(){
 	local ARGS=() METHOD="$1" URI="$2" && shift && shift
 
-	[ ! -z "$NPC_API_KEY" ] && [ ! -z "$NPC_API_SECRET" ] || {
+	[ ! -z "$NPC_NOS_KEY" ] && [ ! -z "$NPC_NOS_SECRET" ] || {
 		echo 'api.key required'>&2
 		return 1
 	}
@@ -188,8 +197,8 @@ nos_http(){
 
 	local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
 			"$METHOD" "$CONTENT_MD5" "$CONTENT_TYPE" "$NOS_DATE" "$NOS_HEADERS" "$NOS_RESOURCE" \
-		| openssl sha256 -hmac "$NPC_API_SECRET" -binary | base64)"
-	ARGS=("${ARGS[@]}" "-H" "Authorization: NOS $NPC_API_KEY:$NOS_SIGNATURE")
+		| openssl sha256 -hmac "$NPC_NOS_SECRET" -binary | base64)"
+	ARGS=("${ARGS[@]}" "-H" "Authorization: NOS $NPC_NOS_KEY:$NOS_SIGNATURE")
 
 	do_http "$METHOD" "$URI" "${ARGS[@]}"
 }
