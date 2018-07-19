@@ -142,7 +142,7 @@ nos_http(){
 		&& NOS_ENDPOINT="$NOS_PROTO$NOS_HOSTNAME" \
 		&& URI="$NOS_PROTO${NOS_BUCKET:+$NOS_BUCKET.}$NOS_HOSTNAME/$NOS_PATH${NOS_QUERY:+?$NOS_QUERY}"
 
-	local NOS_HEADERS DATA CONTENT_TYPE CONTENT_MD5 NOS_DATE NOS_ENTITY_TYPE
+	local NOS_HEADERS DATA CONTENT_TYPE CONTENT_MD5 NOS_DATE NOS_ENTITY_TYPE NOS_OFFSET_EXPIRES
 	while ARG="$1" && shift; do
 		case "$ARG" in
 		"-H"|"--header")
@@ -164,6 +164,9 @@ nos_http(){
 			;;
 		"--json")
 			NOS_ENTITY_TYPE='json'
+			;;
+		"--expires")
+			NOS_OFFSET_EXPIRES="$1" && shift || break
 			;;
 		*)
 			ARGS=("${ARGS[@]}" "$ARG")
@@ -195,12 +198,22 @@ nos_http(){
 	[ ! -z "$NOS_SUBRESOURCES" ] && NOS_SUBRESOURCES="$(echo -n "$NOS_SUBRESOURCES"|LC_ALL=C sort)" \
 		&& NOS_RESOURCE="$NOS_RESOURCE?${NOS_SUBRESOURCES//$'\n'/&}"
 
-	local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
-			"$METHOD" "$CONTENT_MD5" "$CONTENT_TYPE" "$NOS_DATE" "$NOS_HEADERS" "$NOS_RESOURCE" \
-		| openssl sha256 -hmac "$NPC_NOS_SECRET" -binary | base64)"
-	ARGS=("${ARGS[@]}" "-H" "Authorization: NOS $NPC_NOS_KEY:$NOS_SIGNATURE")
+	if [ "$METHOD" == 'URL' ]; then
+		local NOS_EXPIRES="$(( $(date +%s) + ${NOS_OFFSET_EXPIRES:-600} ))"
+		local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
+				"GET" "" "" "$NOS_EXPIRES" "" "$NOS_RESOURCE" \
+			| openssl sha256 -hmac "$NPC_NOS_SECRET" -binary | base64)"
+		echo -n "$URI"; [ -z "$NOS_QUERY" ] && echo -n "?" || echo -n "&"
+		echo "$(export NPC_NOS_KEY NOS_EXPIRES NOS_SIGNATURE
+			jq -nr --arg key "$" '@uri "NOSAccessKeyId=\(env.NPC_NOS_KEY)&Expires=\(env.NOS_EXPIRES)&Signature=\(env.NOS_SIGNATURE)"')"
+	else
+		local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
+				"$METHOD" "$CONTENT_MD5" "$CONTENT_TYPE" "$NOS_DATE" "$NOS_HEADERS" "$NOS_RESOURCE" \
+			| openssl sha256 -hmac "$NPC_NOS_SECRET" -binary | base64)"
+		ARGS=("${ARGS[@]}" "-H" "Authorization: NOS $NPC_NOS_KEY:$NOS_SIGNATURE")
+		do_http "$METHOD" "$URI" "${ARGS[@]}"
+	fi
 
-	do_http "$METHOD" "$URI" "${ARGS[@]}"
 }
 
 api2_http(){
@@ -338,6 +351,10 @@ do_shell(){
 					ARGS=("-I" "${ARGS[@]}")
 					break
 					;;
+				URL)
+					METHOD="$ARG" && URI="$1" && shift
+					break
+					;;
 				"-e"|"--error")
 					ERROR_OUTPUT=
 					;;
@@ -348,8 +365,12 @@ do_shell(){
 			done
 			ARGS=("${ARGS[@]}" "$@")
 			[ ! -z "$METHOD" ] && [ ! -z "$URI" ] && {
-				"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" \
-					| check_http_response "$FILTER" "$ERROR_OUTPUT" && return 0 || return 1					
+				if [ "$METHOD" == 'URL' ]; then
+					"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" && return 0 || return 1
+				else
+					"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" \
+						| check_http_response "$FILTER" "$ERROR_OUTPUT" && return 0 || return 1
+				fi
 			}
 			;;
 		*)
@@ -360,7 +381,7 @@ do_shell(){
 		esac
 	{
 		echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
-		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD) /<bucket>/ [data]"
+		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD|URL) /<bucket>/ [data]"
 		echo "       $(basename $0) api2 (GET|PUT|POST|DELETE|HEAD) '/vpc/ListVPC/2017-11-30?PageSize=20&PageNumber=1' [data]"
 		echo "       $(basename $0) <action> [args...]"
 	} >&2
