@@ -34,8 +34,12 @@ NPC_API_SECRET="${NPC_API_SECRET:-$NPC_APP_SECRET}"
 [ -z "$NPC_NOS_SECRET" ] && NPC_NOS_SECRET="$NPC_API_SECRET"
 
 do_http(){
-	local METHOD="$1" URI="$2"; shift && shift	
+	local METHOD="$1" URI="$2"; shift && shift
 	[ ! -z "$NPC_DEBUG" ] && echo "curl -s -k -X '$METHOD' $(printf "'%s' " "$@") '$URI'" >&2
+	[ ! -z "$DO_HTTP_RAW" ] && {
+		curl -sS -k -X "$METHOD" "$@" "$URI" || return 1
+		return 0
+	}
 	http_headers(){
 		jq -sR 'split("\r\n") | {
 			status: (map(capture("^HTTP/(1.0|1.1) +(?<code>[0-9]+) +*(?<text>.+)$")//empty)|last),
@@ -44,7 +48,7 @@ do_http(){
 	}
 	local RESPONSE="$( 
 		exec 3> >(export METHOD URI;jq -sc '{method: env.METHOD, uri: env.URI} + (.[0]//{}) + { raw:.[1], body:.[2] }')
-		export BODY_RAW="$(curl -s -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 | tr -d '\n')"
+		export BODY_RAW="$(curl -sS -k -D >(http_headers >&3) -X "$METHOD" "$@" "$URI" | base64 | tr -d '\n')"
 		export BODY=$(base64 -d <<<"$BODY_RAW")
 		jq -n 'env.BODY_RAW, env.BODY' >&3 )"
 	DISPLAY_URI="${DO_HTTP_DISPLAY_URI:-$URI}" \
@@ -198,6 +202,7 @@ nos_http(){
 	[ ! -z "$NOS_SUBRESOURCES" ] && NOS_SUBRESOURCES="$(echo -n "$NOS_SUBRESOURCES"|LC_ALL=C sort)" \
 		&& NOS_RESOURCE="$NOS_RESOURCE?${NOS_SUBRESOURCES//$'\n'/&}"
 
+	local DO_HTTP_RAW
 	if [ "$METHOD" == 'GET-URL' ]; then
 		local NOS_EXPIRES="$(( $(date +%s) + ${NOS_OFFSET_EXPIRES:-600} ))"
 		local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
@@ -206,14 +211,16 @@ nos_http(){
 		echo -n "$URI"; [ -z "$NOS_QUERY" ] && echo -n "?" || echo -n "&"
 		echo "$(export NPC_NOS_KEY NOS_EXPIRES NOS_SIGNATURE
 			jq -nr --arg key "$" '@uri "NOSAccessKeyId=\(env.NPC_NOS_KEY)&Expires=\(env.NOS_EXPIRES)&Signature=\(env.NOS_SIGNATURE)"')"
-	else
-		local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
-				"$METHOD" "$CONTENT_MD5" "$CONTENT_TYPE" "$NOS_DATE" "$NOS_HEADERS" "$NOS_RESOURCE" \
-			| openssl sha256 -hmac "$NPC_NOS_SECRET" -binary | base64)"
-		ARGS=("${ARGS[@]}" "-H" "Authorization: NOS $NPC_NOS_KEY:$NOS_SIGNATURE")
-		do_http "$METHOD" "$URI" "${ARGS[@]}"
+		return 0
+	elif [ "$METHOD" == 'GET-CONTENT' ]; then
+		METHOD='GET'
+		DO_HTTP_RAW='Y'
 	fi
-
+	local NOS_SIGNATURE="$(printf '%s\n%s\n%s\n%s\n%s%s' \
+			"$METHOD" "$CONTENT_MD5" "$CONTENT_TYPE" "$NOS_DATE" "$NOS_HEADERS" "$NOS_RESOURCE" \
+		| openssl sha256 -hmac "$NPC_NOS_SECRET" -binary | base64)"
+	ARGS=("${ARGS[@]}" "-H" "Authorization: NOS $NPC_NOS_KEY:$NOS_SIGNATURE")
+	DO_HTTP_RAW="$DO_HTTP_RAW" do_http "$METHOD" "$URI" "${ARGS[@]}"
 }
 
 api2_http(){
@@ -355,6 +362,10 @@ do_shell(){
 					METHOD="$ARG" && URI="$1" && shift
 					break
 					;;
+				GET-CONTENT)
+					METHOD="$ARG" && URI="$1" && shift
+					break
+					;;
 				"-e"|"--error")
 					ERROR_OUTPUT=
 					;;
@@ -365,7 +376,7 @@ do_shell(){
 			done
 			ARGS=("${ARGS[@]}" "$@")
 			[ ! -z "$METHOD" ] && [ ! -z "$URI" ] && {
-				if [ "$METHOD" == 'GET-URL' ]; then
+				if [ "$METHOD" == 'GET-URL' ] || [ "$METHOD" == 'GET-CONTENT' ]; then
 					"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" && return 0 || return 1
 				else
 					"${ACTION}_http" "$METHOD" "$URI" "${ARGS[@]}" \
@@ -381,7 +392,7 @@ do_shell(){
 		esac
 	{
 		echo "Usage: $(basename $0) api (GET|PUT|POST|DELETE|HEAD) /api/v1/namespaces [data]" >&2
-		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD|GET-URL) /<bucket>/ [data]"
+		echo "       $(basename $0) nos (GET|PUT|POST|DELETE|HEAD|GET-URL|GET-CONTENT) /<bucket>/ [data]"
 		echo "       $(basename $0) api2 (GET|PUT|POST|DELETE|HEAD) '/vpc/ListVPC/2017-11-30?PageSize=20&PageNumber=1' [data]"
 		echo "       $(basename $0) <action> [args...]"
 	} >&2
