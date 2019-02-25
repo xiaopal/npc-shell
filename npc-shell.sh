@@ -275,6 +275,8 @@ api2_http(){
 
 	local API2_PARAMS
 	[ ! -z "$API2_QUERY" ] && while IFS='=' read -r -d '&' PARAM_NAME PARAM_VALUE; do
+		# uri decode
+		PARAM_VALUE="$(PARAM_VALUE="${PARAM_VALUE//+/ }" && echo -e "${PARAM_VALUE//%/\\x}")"
 		case "$PARAM_NAME" in
 		"Region")
 			API2_REGION="$PARAM_VALUE"
